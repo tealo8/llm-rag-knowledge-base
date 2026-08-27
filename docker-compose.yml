@@ -1,0 +1,115 @@
+services:
+  knowledge-hub:
+    build: .
+    ports:
+      - "${APP_PORT:-8080}:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      JWT_SECRET: ${JWT_SECRET:-replace-before-production}
+      AUDIT_LOG_QUERIES: ${AUDIT_LOG_QUERIES:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      VECTOR_STORE: ${VECTOR_STORE:-pgvector}
+      PGVECTOR_DSN: postgresql://${POSTGRES_USER:-knowledge}:${POSTGRES_PASSWORD:-knowledge}@pgvector:5432/${POSTGRES_DB:-knowledge}
+      PGVECTOR_DIMENSIONS: ${PGVECTOR_DIMENSIONS:-1024}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-90}
+      TASK_QUEUE: ${TASK_QUEUE:-celery}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
+      MAX_CHUNKED_UPLOAD_BYTES: ${MAX_CHUNKED_UPLOAD_BYTES:-536870912}
+    depends_on:
+      pgvector:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/data:/app/backend/data
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["celery", "-A", "app.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    working_dir: /app/backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEMO_MODE: "false"
+      JWT_SECRET: ${JWT_SECRET:-replace-before-production}
+      TASK_QUEUE: celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      VECTOR_STORE: ${VECTOR_STORE:-pgvector}
+      PGVECTOR_DSN: postgresql://${POSTGRES_USER:-knowledge}:${POSTGRES_PASSWORD:-knowledge}@pgvector:5432/${POSTGRES_DB:-knowledge}
+      PGVECTOR_DIMENSIONS: ${PGVECTOR_DIMENSIONS:-1024}
+    depends_on:
+      pgvector:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/data:/app/backend/data
+    restart: unless-stopped
+
+  pgvector:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-knowledge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-knowledge}
+      POSTGRES_DB: ${POSTGRES_DB:-knowledge}
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-knowledge} -d ${POSTGRES_DB:-knowledge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  model-init:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull ${LLM_MODEL:-qwen2.5:7b} && ollama pull ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  pgvector-data:
+  ollama-data:

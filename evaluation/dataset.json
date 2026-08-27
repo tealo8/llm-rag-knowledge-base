@@ -1,0 +1,65 @@
+[
+  {
+    "id": "eng-incident-lexical",
+    "identity": "engineer",
+    "query": "P0事故首次状态通报要在多久内发出？",
+    "expected_titles": ["生产事故响应手册"],
+    "forbidden_titles": ["差旅与费用报销制度", "管理层年度预算草案"],
+    "answer_contains": ["十分钟"]
+  },
+  {
+    "id": "eng-incident-semantic",
+    "identity": "engineer",
+    "query": "最高等级线上故障发生后，多快要第一次同步进展？",
+    "expected_titles": ["生产事故响应手册"],
+    "forbidden_titles": ["差旅与费用报销制度", "管理层年度预算草案"]
+  },
+  {
+    "id": "finance-incident-denied",
+    "identity": "finance",
+    "query": "P0事故首次通报要求是什么？",
+    "expected_titles": [],
+    "forbidden_titles": ["生产事故响应手册"],
+    "expect_refusal": true
+  },
+  {
+    "id": "finance-travel",
+    "identity": "finance",
+    "query": "一线城市住宿每晚上限是多少？",
+    "expected_titles": ["差旅与费用报销制度"],
+    "forbidden_titles": ["生产事故响应手册", "管理层年度预算草案"],
+    "answer_contains": ["600"]
+  },
+  {
+    "id": "engineer-travel-denied",
+    "identity": "engineer",
+    "query": "一线城市住宿每晚上限是多少？",
+    "expected_titles": [],
+    "forbidden_titles": ["差旅与费用报销制度"],
+    "expect_refusal": true
+  },
+  {
+    "id": "admin-private-budget",
+    "identity": "admin",
+    "query": "研发基础设施预算计划增长多少？",
+    "expected_titles": ["管理层年度预算草案"],
+    "forbidden_titles": [],
+    "answer_contains": ["百分之十八"]
+  },
+  {
+    "id": "other-tenant-denied",
+    "identity": "otheradmin",
+    "query": "代码合并到主分支前需要几人审查？",
+    "expected_titles": [],
+    "forbidden_titles": ["研发交付规范"],
+    "expect_refusal": true
+  },
+  {
+    "id": "other-tenant-own-data",
+    "identity": "otheradmin",
+    "query": "客户记录默认保留多久？",
+    "expected_titles": ["星云客户数据处理规范"],
+    "forbidden_titles": ["研发交付规范", "生产事故响应手册"],
+    "answer_contains": ["九十天"]
+  }
+]
