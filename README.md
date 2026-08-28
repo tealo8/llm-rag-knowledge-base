@@ -129,9 +129,9 @@ chmod +x start.sh
 ./start.sh
 ```
 
-脚本会自动检查 Python 和 Node.js、在根目录创建 `venv/`、从缺失的 `.env.example` 生成 `.env`、安装 `backend/requirements.txt` 与前端依赖、构建前端，然后依次启动 FastAPI 和 Vite。启动成功后会自动打开 [http://localhost:8080](http://localhost:8080)。开发服务器地址为 `http://localhost:5173`，其 API 显式指向 8080 后端。
+脚本会自动检查 Python 和 Node.js、在根目录创建 `venv/`、从缺失的 `.env.example` 生成 `.env`、安装 `backend/requirements.txt` 与前端依赖、构建前端，然后依次启动 FastAPI 和 Vite。默认应用地址为 `http://localhost:8080`，开发服务器地址为 `http://localhost:5173`；启动成功后会自动打开实际应用地址。
 
-若 8080 或 5173 已被占用，脚本会停止并给出中文错误。按 `Ctrl+C` 或关闭启动终端会同时清理前后端进程；单独关闭浏览器标签页不会结束服务，因为脚本无法安全区分该标签页和用户已有的浏览器进程。
+若默认端口被占用，脚本会从该端口开始自动向后查找最多 100 个端口，例如 `8080 -> 8081`、`5173 -> 5174`。健康检查、Vite API 地址、控制台提示和自动打开的浏览器会同步使用实际端口。按 `Ctrl+C` 或关闭启动终端会同时清理前后端进程；单独关闭浏览器标签页不会结束服务，因为脚本无法安全区分该标签页和用户已有的浏览器进程。
 
 OpenAPI：[http://localhost:8080/docs](http://localhost:8080/docs)。可用 `.\scripts\smoke.ps1` 做无破坏性冒烟检查；它只验证健康检查、登录、分页文档和 `/metrics`。
 

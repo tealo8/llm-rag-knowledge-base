@@ -43,6 +43,26 @@ function Test-PortListening([int]$port) {
     }
 }
 
+function Test-PortAvailable([int]$port) {
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
+    try {
+        $listener.Start()
+        return $true
+    } catch {
+        return $false
+    } finally {
+        try { $listener.Stop() } catch { }
+    }
+}
+
+function Find-AvailablePort([int]$startPort, [int]$maxAttempts = 100) {
+    for ($offset = 0; $offset -lt $maxAttempts; $offset++) {
+        $candidate = $startPort + $offset
+        if (-not (Test-PortListening $candidate) -and (Test-PortAvailable $candidate)) { return $candidate }
+    }
+    throw "从端口 $startPort 开始连续检查 $maxAttempts 个端口，均不可用。"
+}
+
 function Stop-ProcessTree($process, [string]$name) {
     if ($null -eq $process) { return }
     try {
@@ -101,10 +121,13 @@ try {
     }
     Write-Step "Node.js $(& $node.Source --version) 检测通过。"
 
-    foreach ($port in @(8080, 5173)) {
-        if (Test-PortListening $port) {
-            throw "端口 $port 已被占用。请关闭占用该端口的程序后重试。"
-        }
+    $backendPort = Find-AvailablePort 8080
+    $frontendPort = Find-AvailablePort 5173
+    if ($backendPort -ne 8080) {
+        Write-Host "[知域] 端口 8080 已占用，后端自动顺延至 $backendPort。" -ForegroundColor Yellow
+    }
+    if ($frontendPort -ne 5173) {
+        Write-Host "[知域] 端口 5173 已占用，前端自动顺延至 $frontendPort。" -ForegroundColor Yellow
     }
 
     $venvDir = Join-Path $projectRoot "venv"
@@ -134,31 +157,31 @@ try {
             & $npm.Source ci --no-audit --no-fund
             if ($LASTEXITCODE -ne 0) { throw "前端依赖安装失败，请检查网络和 Node.js 版本。" }
         }
-        Write-Step "正在构建由 8080 端口托管的前端资源..."
+        Write-Step "正在构建由 $backendPort 端口托管的前端资源..."
         & $npm.Source run build
         if ($LASTEXITCODE -ne 0) { throw "前端构建失败，请检查 TypeScript/Vite 输出。" }
     } finally {
         Pop-Location
     }
 
-    Write-Step "正在启动 FastAPI 后端：http://localhost:8080"
+    Write-Step "正在启动 FastAPI 后端：http://localhost:$backendPort"
     $backendProcess = Start-Process -FilePath $venvPython `
-        -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8080") `
+        -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "$backendPort") `
         -WorkingDirectory (Join-Path $projectRoot "backend") -NoNewWindow -PassThru
 
     $backendReady = $false
     for ($attempt = 1; $attempt -le 90; $attempt++) {
         if ($backendProcess.HasExited) { throw "FastAPI 后端启动失败，退出码：$($backendProcess.ExitCode)。" }
         try {
-            $health = Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/health" -TimeoutSec 2
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$backendPort/api/health" -TimeoutSec 2
             if ($health.status -eq "ok") { $backendReady = $true; break }
         } catch { }
         Start-Sleep -Seconds 1
     }
     if (-not $backendReady) { throw "FastAPI 后端 90 秒内未就绪，请检查 .env、Ollama 和控制台日志。" }
 
-    Write-Step "后端已就绪，正在启动前端开发服务器：http://localhost:5173"
-    $frontendCommand = 'set "VITE_API_URL=http://127.0.0.1:8080/api" && npm.cmd run dev -- --host 127.0.0.1'
+    Write-Step "后端已就绪，正在启动前端开发服务器：http://localhost:$frontendPort"
+    $frontendCommand = 'set "VITE_API_URL=" && set "VITE_API_PROXY_TARGET=http://127.0.0.1:' + $backendPort + '" && npm.cmd run dev -- --host 127.0.0.1 --port ' + $frontendPort + ' --strictPort'
     $frontendInputPath = Join-Path $env:TEMP ("knowledge-frontend-input-" + [guid]::NewGuid().ToString("N") + ".txt")
     [IO.File]::WriteAllText($frontendInputPath, "")
     $frontendProcess = Start-Process -FilePath $env:ComSpec `
@@ -168,7 +191,7 @@ try {
     $frontendReady = $false
     for ($attempt = 1; $attempt -le 30; $attempt++) {
         if ($frontendProcess.HasExited) { throw "前端开发服务器启动失败，退出码：$($frontendProcess.ExitCode)。" }
-        if (Test-PortListening 5173) { $frontendReady = $true; break }
+        if (Test-PortListening $frontendPort) { $frontendReady = $true; break }
         Start-Sleep -Seconds 1
     }
     if (-not $frontendReady) { throw "前端开发服务器 30 秒内未就绪。" }
@@ -176,9 +199,9 @@ try {
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host "  知域企业知识库启动成功" -ForegroundColor Green
-    Write-Host "  应用地址：http://localhost:8080" -ForegroundColor White
-    Write-Host "  开发前端：http://localhost:5173" -ForegroundColor White
-    Write-Host "  API 文档：http://localhost:8080/docs" -ForegroundColor White
+    Write-Host "  应用地址：http://localhost:$backendPort" -ForegroundColor White
+    Write-Host "  开发前端：http://localhost:$frontendPort" -ForegroundColor White
+    Write-Host "  API 文档：http://localhost:$backendPort/docs" -ForegroundColor White
     Write-Host "  管理员：admin / admin123" -ForegroundColor White
     Write-Host "  普通成员：engineer / engineer123" -ForegroundColor White
     Write-Host "  只读成员：finance / finance123" -ForegroundColor White
@@ -186,7 +209,7 @@ try {
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host ""
 
-    Start-Process "http://localhost:8080"
+    Start-Process "http://localhost:$backendPort"
     try {
         $originalTreatControlCAsInput = [Console]::TreatControlCAsInput
         [Console]::TreatControlCAsInput = $true

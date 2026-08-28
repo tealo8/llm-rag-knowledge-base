@@ -79,9 +79,24 @@ finally:
 PY
 }
 
-for port in 8080 5173; do
-  port_available "$port" || fail "端口 $port 已被占用。请关闭占用该端口的程序后重试。"
-done
+find_available_port() {
+  local start_port="$1"
+  local candidate="$start_port"
+  local attempt
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if port_available "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    candidate=$((candidate + 1))
+  done
+  return 1
+}
+
+BACKEND_PORT="$(find_available_port 8080)" || fail "从端口 8080 开始连续检查 100 个端口，均不可用。"
+FRONTEND_PORT="$(find_available_port 5173)" || fail "从端口 5173 开始连续检查 100 个端口，均不可用。"
+[[ "$BACKEND_PORT" == "8080" ]] || printf '\033[33m[知域] 端口 8080 已占用，后端自动顺延至 %s。\033[0m\n' "$BACKEND_PORT"
+[[ "$FRONTEND_PORT" == "5173" ]] || printf '\033[33m[知域] 端口 5173 已占用，前端自动顺延至 %s。\033[0m\n' "$FRONTEND_PORT"
 
 if [[ ! -x venv/bin/python ]]; then
   step "未找到 ./venv，正在创建虚拟环境..."
@@ -101,20 +116,20 @@ if [[ ! -x frontend/node_modules/.bin/vite ]]; then
     || fail "前端依赖安装失败，请检查网络和 Node.js 版本。"
 fi
 
-step "正在构建由 8080 端口托管的前端资源..."
+step "正在构建由 $BACKEND_PORT 端口托管的前端资源..."
 (cd frontend && npm run build) || fail "前端构建失败，请检查 TypeScript/Vite 输出。"
 
-step "正在启动 FastAPI 后端：http://localhost:8080"
+step "正在启动 FastAPI 后端：http://localhost:$BACKEND_PORT"
 (
   cd backend
-  exec "$VENV_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8080
+  exec "$VENV_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
 ) &
 BACKEND_PID=$!
 
 backend_ready=0
 for ((attempt = 1; attempt <= 90; attempt++)); do
   kill -0 "$BACKEND_PID" 2>/dev/null || fail "FastAPI 后端启动失败，请检查控制台日志。"
-  if "$VENV_PYTHON" -c 'import urllib.request; raise SystemExit(0 if urllib.request.urlopen("http://127.0.0.1:8080/api/health", timeout=2).status == 200 else 1)' 2>/dev/null; then
+  if "$VENV_PYTHON" -c "import urllib.request; raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:$BACKEND_PORT/api/health', timeout=2).status == 200 else 1)" 2>/dev/null; then
     backend_ready=1
     break
   fi
@@ -122,17 +137,17 @@ for ((attempt = 1; attempt <= 90; attempt++)); do
 done
 [[ "$backend_ready" -eq 1 ]] || fail "FastAPI 后端 90 秒内未就绪，请检查 .env、Ollama 和控制台日志。"
 
-step "后端已就绪，正在启动前端开发服务器：http://localhost:5173"
+step "后端已就绪，正在启动前端开发服务器：http://localhost:$FRONTEND_PORT"
 (
   cd frontend
-  VITE_API_URL="http://127.0.0.1:8080/api" exec npm run dev -- --host 127.0.0.1
+  VITE_API_URL="" VITE_API_PROXY_TARGET="http://127.0.0.1:$BACKEND_PORT" exec npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort
 ) &
 FRONTEND_PID=$!
 
 frontend_ready=0
 for ((attempt = 1; attempt <= 30; attempt++)); do
   kill -0 "$FRONTEND_PID" 2>/dev/null || fail "前端开发服务器启动失败，请检查控制台日志。"
-  if ! port_available 5173; then
+  if ! port_available "$FRONTEND_PORT"; then
     frontend_ready=1
     break
   fi
@@ -142,9 +157,9 @@ done
 
 printf '\n\033[32m============================================================\033[0m\n'
 printf '\033[32m  知域企业知识库启动成功\033[0m\n'
-printf '  应用地址：http://localhost:8080\n'
-printf '  开发前端：http://localhost:5173\n'
-printf '  API 文档：http://localhost:8080/docs\n'
+printf '  应用地址：http://localhost:%s\n' "$BACKEND_PORT"
+printf '  开发前端：http://localhost:%s\n' "$FRONTEND_PORT"
+printf '  API 文档：http://localhost:%s/docs\n' "$BACKEND_PORT"
 printf '  管理员：admin / admin123\n'
 printf '  普通成员：engineer / engineer123\n'
 printf '  只读成员：finance / finance123\n'
@@ -152,11 +167,11 @@ printf '\033[33m  按 Ctrl+C 或关闭本启动终端，可停止前后端进程
 printf '\033[32m============================================================\033[0m\n\n'
 
 if command -v open >/dev/null 2>&1; then
-  open "http://localhost:8080" >/dev/null 2>&1 || true
+  open "http://localhost:$BACKEND_PORT" >/dev/null 2>&1 || true
 elif command -v xdg-open >/dev/null 2>&1; then
-  xdg-open "http://localhost:8080" >/dev/null 2>&1 || true
+  xdg-open "http://localhost:$BACKEND_PORT" >/dev/null 2>&1 || true
 else
-  printf '\033[33m[知域] 未找到浏览器打开命令，请手动访问 http://localhost:8080\033[0m\n'
+  printf '\033[33m[知域] 未找到浏览器打开命令，请手动访问 http://localhost:%s\033[0m\n' "$BACKEND_PORT"
 fi
 
 while kill -0 "$BACKEND_PID" 2>/dev/null && kill -0 "$FRONTEND_PID" 2>/dev/null; do
