@@ -107,24 +107,35 @@ flowchart LR
 
 ## 本地快速启动
 
-先确保 Ollama 在 `127.0.0.1:11434` 可访问：
+前置依赖：Python 3.10+、Node.js 20.19+ 或 22.12+。使用真实本地模型时，还需先启动 Ollama，并准备 `qwen2.5:7b` 和 `qwen3-embedding:0.6b`：
 
 ```powershell
 ollama pull qwen2.5:7b
 ollama pull qwen3-embedding:0.6b
-
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-npm ci --prefix frontend
-.\scripts\start-local.ps1
 ```
 
-演示地址：[http://127.0.0.1:8080](http://127.0.0.1:8080)  
-OpenAPI：[http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)
+### Windows 一键启动
 
-可用 `.\scripts\smoke.ps1` 做无破坏性冒烟检查；它只验证健康检查、登录、分页文档和 `/metrics`。
+直接双击根目录的 `start.bat`，或在 PowerShell 中执行：
 
-跳过重复前端构建可用：
+```powershell
+.\start.bat
+```
+
+### Linux / macOS 一键启动
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+脚本会自动检查 Python 和 Node.js、在根目录创建 `venv/`、从缺失的 `.env.example` 生成 `.env`、安装 `backend/requirements.txt` 与前端依赖、构建前端，然后依次启动 FastAPI 和 Vite。启动成功后会自动打开 [http://localhost:8080](http://localhost:8080)。开发服务器地址为 `http://localhost:5173`，其 API 显式指向 8080 后端。
+
+若 8080 或 5173 已被占用，脚本会停止并给出中文错误。按 `Ctrl+C` 或关闭启动终端会同时清理前后端进程；单独关闭浏览器标签页不会结束服务，因为脚本无法安全区分该标签页和用户已有的浏览器进程。
+
+OpenAPI：[http://localhost:8080/docs](http://localhost:8080/docs)。可用 `.\scripts\smoke.ps1` 做无破坏性冒烟检查；它只验证健康检查、登录、分页文档和 `/metrics`。
+
+需要手动启动或跳过重复构建时，仍可使用：
 
 ```powershell
 .\scripts\start-local.ps1 -SkipBuild
