@@ -36,6 +36,7 @@ async function assertNoPageOverflow(label) {
 try {
   await page.goto("http://127.0.0.1:8080", { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "登录知识空间" }).waitFor();
+  await page.waitForTimeout(350);
   await assertNoPageOverflow("desktop login");
   await shot("12-login-8080-desktop.png");
 
