@@ -13,6 +13,8 @@ from ..schemas import (
     ChunkResponse,
     DocumentPermissionUpdate,
     DocumentResponse,
+    DocumentBatchRequest,
+    DocumentPreviewResponse,
     GroupResponse,
 )
 from ..security import (
@@ -25,6 +27,7 @@ from ..services.audit import write_audit
 from ..services.documents import (
     ingest_document,
     reparse_document,
+    parse_document,
     validate_document_acl,
 )
 from ..services.vector_store import VectorStoreError, get_vector_store
@@ -110,6 +113,7 @@ def list_documents(
     include_versions: bool = False,
     q: str = Query("", max_length=200),
     visibility: str | None = Query(None, pattern="^(organization|restricted|private)$"),
+    tag: str | None = Query(None, max_length=80),
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     user: CurrentUser = Depends(get_current_user),
@@ -125,6 +129,9 @@ def list_documents(
     if visibility:
         filters.append("d.visibility = ?")
         params.append(visibility)
+    if tag and tag.strip():
+        filters.append("EXISTS (SELECT 1 FROM json_each(d.tags_json) WHERE LOWER(value) = LOWER(?))")
+        params.append(tag.strip())
     cleaned_query = q.strip().lower()
     if cleaned_query:
         filters.append(
@@ -190,11 +197,37 @@ async def upload_document(
     return _get_uploaded_document(document_id, user)
 
 
+@router.post("/batch")
+async def batch_documents(payload: DocumentBatchRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, object]:
+    results: list[dict[str, object]] = []
+    for document_id in dict.fromkeys(payload.document_ids):
+        try:
+            if payload.action == "delete":
+                delete_document(document_id, user)
+                results.append({"document_id": document_id, "status": "deleted"})
+            else:
+                count = await reparse_document(document_id, user)
+                results.append({"document_id": document_id, "status": "indexed", "chunk_count": count})
+        except HTTPException as exc:
+            results.append({"document_id": document_id, "status": "failed", "error": str(exc.detail)})
+    return {"action": payload.action, "results": results}
+
+
 @router.get("/{document_id}", response_model=DocumentResponse)
 def get_document(
     document_id: str, user: CurrentUser = Depends(get_current_user)
 ) -> DocumentResponse:
     return _get_document(document_id, user)
+
+
+@router.get("/{document_id}/preview", response_model=DocumentPreviewResponse)
+def preview_document(document_id: str, user: CurrentUser = Depends(get_current_user)) -> DocumentPreviewResponse:
+    document = _get_document(document_id, user)
+    path = get_settings().upload_dir / f"{document_id}{Path(document.filename).suffix.lower()}"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="原始文件不存在，无法预览")
+    pages = parse_document(document.filename, path.read_bytes())
+    return DocumentPreviewResponse(id=document.id, title=document.title, filename=document.filename, content_type=document.content_type, text="\n\n".join(page.text for page in pages))
 
 
 @router.get("/{document_id}/status", response_model=DocumentResponse)

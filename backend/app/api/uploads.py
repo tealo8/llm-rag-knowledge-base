@@ -44,6 +44,9 @@ def create_upload_session(
         require_knowledge_base_permission(
             connection, user, payload.knowledge_base_id, "upload"
         )
+        kb_state = connection.execute("SELECT allow_upload FROM knowledge_bases WHERE id = ?", (payload.knowledge_base_id,)).fetchone()
+        if kb_state is not None and not bool(kb_state["allow_upload"]):
+            raise HTTPException(status_code=403, detail="当前知识库暂未开放文档上传")
         connection.execute(
             """
             INSERT INTO upload_sessions

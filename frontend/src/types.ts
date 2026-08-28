@@ -53,6 +53,13 @@ export interface KnowledgeBase {
   permission: KnowledgeBasePermission;
   document_count: number;
   created_at: string;
+  tags: string[];
+  avatar_url: string | null;
+  allow_qa: boolean;
+  allow_upload: boolean;
+  quota_documents: number | null;
+  quota_bytes: number | null;
+  rag_settings: Record<string, unknown>;
 }
 
 export interface KnowledgeBaseMember {
@@ -127,6 +134,8 @@ export interface ConversationSummary {
   message_count: number;
   created_at: string;
   updated_at: string;
+  favorite: boolean;
+  parent_id: string | null;
 }
 
 export interface ConversationMessage {
@@ -136,6 +145,7 @@ export interface ConversationMessage {
   citations: Citation[];
   metrics: Record<string, string | number>;
   feedback: "up" | "down" | null;
+  feedback_reason?: "hallucination" | "incorrect" | "incomplete" | "irrelevant" | null;
   created_at: string;
 }
 
@@ -171,6 +181,8 @@ export interface AuditLog {
   query: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+  ip_address?: string | null;
+  result?: "success" | "failure";
 }
 
 export interface ModelState {

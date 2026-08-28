@@ -1,6 +1,6 @@
 import type {
   AdminUser, AuditLog, ChatResult, Chunk, ConversationDetail, ConversationSummary,
-  DocumentItem, Group, KnowledgeBase, KnowledgeBaseMember, KnowledgeBasePermission,
+  DocumentItem, Group, KnowledgeBase, KnowledgeBaseMember, KnowledgeBasePermission, Citation,
   PageParams, PageResult, RagSettings, Role, SystemStatus, User, Visibility,
 } from "./types";
 
@@ -147,9 +147,10 @@ export const api = {
     collectPages((page) => pagedRequest<KnowledgeBase>(`/knowledge-bases?${pageQuery({ page, pageSize: 100 }, { include_archived: includeArchived })}`, token)),
   createKnowledgeBase: (token: string, values: { name: string; slug: string; description: string }) =>
     request<KnowledgeBase>("/knowledge-bases", token, { method: "POST", body: JSON.stringify(values) }),
-  updateKnowledgeBase: (token: string, id: string, values: Partial<Pick<KnowledgeBase, "name" | "description" | "status">>) =>
+  updateKnowledgeBase: (token: string, id: string, values: Partial<Pick<KnowledgeBase, "name" | "description" | "status" | "tags" | "avatar_url" | "allow_qa" | "allow_upload" | "quota_documents" | "quota_bytes">> & { rag_settings?: Record<string, unknown> }) =>
     request<KnowledgeBase>(`/knowledge-bases/${id}`, token, { method: "PATCH", body: JSON.stringify(values) }),
   deleteKnowledgeBase: (token: string, id: string) => request<void>(`/knowledge-bases/${id}`, token, { method: "DELETE" }),
+  knowledgeBaseStats: (token: string, id: string) => request<{ knowledge_base_id: string; document_count: number; chunk_count: number; question_count: number; prompt_tokens: number; completion_tokens: number; cited_question_count: number; answer_success_rate: number }>(`/knowledge-bases/${id}/stats`, token),
   knowledgeBaseMemberPage: (token: string, id: string, params: PageParams = {}) =>
     pagedRequest<KnowledgeBaseMember>(`/knowledge-bases/${id}/access?${pageQuery(params)}`, token),
   knowledgeBaseMembers: (token: string, id: string) =>
@@ -157,15 +158,17 @@ export const api = {
   setKnowledgeBaseAccess: (token: string, id: string, userId: string, permission: KnowledgeBasePermission | null) =>
     request<void>(`/knowledge-bases/${id}/access`, token, { method: "PUT", body: JSON.stringify({ user_id: userId, permission }) }),
 
-  documentPage: (token: string, knowledgeBaseId: string, params: PageParams & { includeVersions?: boolean; visibility?: Visibility | "all" } = {}) =>
+  documentPage: (token: string, knowledgeBaseId: string, params: PageParams & { includeVersions?: boolean; visibility?: Visibility | "all"; tag?: string } = {}) =>
     pagedRequest<DocumentItem>(`/documents?${pageQuery(params, {
       knowledge_base_id: knowledgeBaseId,
       include_versions: params.includeVersions ?? false,
       visibility: params.visibility && params.visibility !== "all" ? params.visibility : undefined,
+      tag: params.tag,
     })}`, token),
   documents: (token: string, knowledgeBaseId: string, includeVersions = false) =>
     collectPages((page) => pagedRequest<DocumentItem>(`/documents?${pageQuery({ page, pageSize: 100 }, { knowledge_base_id: knowledgeBaseId, include_versions: includeVersions })}`, token)),
   document: (token: string, documentId: string) => request<DocumentItem>(`/documents/${documentId}`, token),
+  documentPreview: (token: string, documentId: string) => request<{ id: string; title: string; filename: string; content_type: string; text: string }>(`/documents/${documentId}/preview`, token),
   documentVersionPage: (token: string, documentId: string, params: PageParams = {}) =>
     pagedRequest<DocumentItem>(`/documents/${documentId}/versions?${pageQuery(params)}`, token),
   documentVersions: (token: string, documentId: string) =>
@@ -178,6 +181,7 @@ export const api = {
   updateDocumentPermissions: (token: string, documentId: string, visibility: Visibility, groupIds: string[], userIds: string[]) =>
     request<DocumentItem>(`/documents/${documentId}/permissions`, token, { method: "PATCH", body: JSON.stringify({ visibility, group_ids: groupIds, user_ids: userIds }) }),
   deleteDocument: (token: string, documentId: string) => request<void>(`/documents/${documentId}`, token, { method: "DELETE" }),
+  batchDocuments: (token: string, documentIds: string[], action: "delete" | "reparse") => request<{ action: string; results: Array<{ document_id: string; status: string; error?: string; chunk_count?: number }> }>("/documents/batch", token, { method: "POST", body: JSON.stringify({ document_ids: documentIds, action }) }),
   chunk: (token: string, documentId: string, chunkId: string) => request<Chunk>(`/documents/${documentId}/chunks/${chunkId}`, token),
   async download(token: string, document: DocumentItem) {
     const response = await fetch(`${API_BASE}/documents/${document.id}/download`, { headers: { Authorization: `Bearer ${token}` } });
@@ -191,24 +195,28 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  chat: (token: string, query: string, knowledgeBaseId: string, conversationId?: string) =>
-    request<ChatResult>("/chat", token, { method: "POST", body: JSON.stringify({ query, knowledge_base_id: knowledgeBaseId, conversation_id: conversationId ?? null }) }),
-  conversationPage: (token: string, knowledgeBaseId: string, params: PageParams = {}) =>
-    pagedRequest<ConversationSummary>(`/conversations?${pageQuery(params, { knowledge_base_id: knowledgeBaseId })}`, token),
+  chat: (token: string, query: string, knowledgeBaseId: string, conversationId?: string, options: { top_k?: number; rerank?: boolean; mode?: "fast" | "deep"; stream?: boolean; model?: string; temperature?: number; top_p?: number; signal?: AbortSignal } = {}) =>
+    request<ChatResult>("/chat", token, { method: "POST", signal: options.signal, body: JSON.stringify({ query, knowledge_base_id: knowledgeBaseId, conversation_id: conversationId ?? null, ...options, signal: undefined }) }),
+  conversationPage: (token: string, knowledgeBaseId: string, params: PageParams & { favorite?: boolean } = {}) =>
+    pagedRequest<ConversationSummary>(`/conversations?${pageQuery(params, { knowledge_base_id: knowledgeBaseId, favorite: params.favorite })}`, token),
   conversations: (token: string, knowledgeBaseId: string) =>
     collectPages((page) => pagedRequest<ConversationSummary>(`/conversations?${pageQuery({ page, pageSize: 100 }, { knowledge_base_id: knowledgeBaseId })}`, token)),
   conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${id}`, token),
   deleteConversation: (token: string, id: string) => request<void>(`/conversations/${id}`, token, { method: "DELETE" }),
-  feedback: (token: string, conversationId: string, messageId: string, rating: "up" | "down") =>
-    request<void>(`/conversations/${conversationId}/messages/${messageId}/feedback`, token, { method: "PUT", body: JSON.stringify({ rating, comment: "" }) }),
-  async exportConversation(token: string, id: string) {
-    const response = await fetch(`${API_BASE}/conversations/${id}/export`, { headers: { Authorization: `Bearer ${token}` } });
+  updateConversation: (token: string, id: string, values: { title?: string; favorite?: boolean }) => request<ConversationSummary>(`/conversations/${id}`, token, { method: "PATCH", body: JSON.stringify(values) }),
+  branchConversation: (token: string, id: string, messageId?: string) => request<ConversationSummary>(`/conversations/${id}/branch`, token, { method: "POST", body: JSON.stringify({ message_id: messageId ?? null }) }),
+  shareConversation: (token: string, id: string, values: { mode: "readonly" | "continue"; expires_in_hours?: number; password?: string }) => request<{ id: string; conversation_id: string; mode: "readonly" | "continue"; token: string; expires_at: string | null; created_at: string }>(`/conversations/${id}/share`, token, { method: "POST", body: JSON.stringify(values) }),
+  sharedConversation: (shareToken: string, password?: string) => request<{ title: string; knowledge_base_name: string; mode: "readonly" | "continue"; expires_at: string | null; messages: Array<{ id: string; role: "user" | "assistant"; content: string; citations: Citation[]; metrics: Record<string, string | number>; created_at: string }> }>(`/conversations/share/${encodeURIComponent(shareToken)}/access`, undefined, { method: "POST", body: JSON.stringify({ password: password || null }) }),
+  feedback: (token: string, conversationId: string, messageId: string, rating: "up" | "down", reason?: string, comment = "") =>
+    request<void>(`/conversations/${conversationId}/messages/${messageId}/feedback`, token, { method: "PUT", body: JSON.stringify({ rating, reason: reason ?? null, comment }) }),
+  async exportConversation(token: string, id: string, format: "markdown" | "pdf" = "markdown") {
+    const response = await fetch(`${API_BASE}/conversations/${id}/export?format=${format}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) throw new ApiError("会话导出失败", response.status);
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const anchor = window.document.createElement("a");
     anchor.href = url;
-    anchor.download = `conversation-${id}.md`;
+    anchor.download = `conversation-${id}.${format === "pdf" ? "pdf" : "md"}`;
     anchor.click();
     URL.revokeObjectURL(url);
   },
@@ -224,7 +232,7 @@ export const api = {
     request<AdminUser>(`/admin/users/${userId}/access`, token, { method: "PATCH", body: JSON.stringify({ role, group_ids: groupIds }) }),
   createGroup: (token: string, name: string, description: string) => request<Group>("/admin/groups", token, { method: "POST", body: JSON.stringify({ name, description }) }),
   deleteGroup: (token: string, groupId: string) => request<void>(`/admin/groups/${groupId}`, token, { method: "DELETE" }),
-  auditPage: (token: string, params: PageParams = {}) => pagedRequest<AuditLog>(`/admin/audit?${pageQuery(params)}`, token),
+  auditPage: (token: string, params: PageParams & { action?: string; result?: string } = {}) => pagedRequest<AuditLog>(`/admin/audit?${pageQuery(params, { action: params.action, result: params.result })}`, token),
   audit: (token: string) => collectPages((page) => pagedRequest<AuditLog>(`/admin/audit?${pageQuery({ page, pageSize: 100 })}`, token)),
   systemStatus: (token: string) => request<SystemStatus>("/admin/system/status", token),
   settings: (token: string) => request<RagSettings>("/admin/settings", token),

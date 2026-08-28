@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 
@@ -13,6 +14,7 @@ from ..schemas import (
     KnowledgeBaseMemberAccess,
     KnowledgeBaseResponse,
     KnowledgeBaseUpdateRequest,
+    KnowledgeBaseStatsResponse,
 )
 from ..security import (
     CurrentUser,
@@ -40,6 +42,13 @@ def _serialize(connection, row, user: CurrentUser) -> KnowledgeBaseResponse:
         permission=permission,
         document_count=row["document_count"],
         created_at=row["created_at"],
+        tags=json.loads(row["tags_json"] or "[]") if "tags_json" in row.keys() else [],
+        avatar_url=row["avatar_url"] if "avatar_url" in row.keys() else None,
+        allow_qa=bool(row["allow_qa"]) if "allow_qa" in row.keys() else True,
+        allow_upload=bool(row["allow_upload"]) if "allow_upload" in row.keys() else True,
+        quota_documents=row["quota_documents"] if "quota_documents" in row.keys() else None,
+        quota_bytes=row["quota_bytes"] if "quota_bytes" in row.keys() else None,
+        rag_settings=json.loads(row["settings_json"] or "{}") if "settings_json" in row.keys() else {},
     )
 
 
@@ -138,9 +147,20 @@ def update_knowledge_base(
         name = payload.name.strip() if payload.name is not None else current["name"]
         description = payload.description.strip() if payload.description is not None else current["description"]
         status = payload.status or current["status"]
+        tags = payload.tags if payload.tags is not None else json.loads(current["tags_json"] or "[]")
+        avatar_url = payload.avatar_url if payload.avatar_url is not None else current["avatar_url"]
+        allow_qa = int(payload.allow_qa) if payload.allow_qa is not None else current["allow_qa"]
+        allow_upload = int(payload.allow_upload) if payload.allow_upload is not None else current["allow_upload"]
+        quota_documents = payload.quota_documents if payload.quota_documents is not None else current["quota_documents"]
+        quota_bytes = payload.quota_bytes if payload.quota_bytes is not None else current["quota_bytes"]
+        rag_settings = payload.rag_settings if payload.rag_settings is not None else json.loads(current["settings_json"] or "{}")
         connection.execute(
-            "UPDATE knowledge_bases SET name = ?, description = ?, status = ?, updated_at = ? WHERE id = ?",
-            (name, description, status, utc_now(), knowledge_base_id),
+            """UPDATE knowledge_bases SET name = ?, description = ?, status = ?, tags_json = ?,
+               avatar_url = ?, allow_qa = ?, allow_upload = ?, quota_documents = ?, quota_bytes = ?,
+               settings_json = ?, updated_at = ? WHERE id = ?""",
+            (name, description, status, json.dumps(tags, ensure_ascii=False), avatar_url,
+             allow_qa, allow_upload, quota_documents, quota_bytes,
+             json.dumps(rag_settings, ensure_ascii=False), utc_now(), knowledge_base_id),
         )
         write_audit(
             connection,
@@ -148,7 +168,7 @@ def update_knowledge_base(
             "knowledge_base.update",
             "knowledge_base",
             knowledge_base_id,
-            metadata={"status": status},
+            metadata={"status": status, "allow_qa": bool(allow_qa), "allow_upload": bool(allow_upload)},
         )
         row = connection.execute(
             """
@@ -183,6 +203,22 @@ def delete_knowledge_base(
             knowledge_base_id,
         )
     return Response(status_code=204)
+
+
+@router.get("/{knowledge_base_id}/stats", response_model=KnowledgeBaseStatsResponse)
+def knowledge_base_stats(knowledge_base_id: str, user: CurrentUser = Depends(get_current_user)) -> KnowledgeBaseStatsResponse:
+    with db_session() as connection:
+        require_knowledge_base_permission(connection, user, knowledge_base_id, "view")
+        docs = connection.execute("SELECT COUNT(*) AS count FROM documents WHERE knowledge_base_id = ? AND is_current = 1", (knowledge_base_id,)).fetchone()["count"]
+        chunks = connection.execute("SELECT COUNT(*) AS count FROM chunks WHERE knowledge_base_id = ?", (knowledge_base_id,)).fetchone()["count"]
+        usage = connection.execute("""SELECT COUNT(*) AS questions,
+          COALESCE(SUM(CAST(json_extract(metadata_json, '$.prompt_tokens') AS INTEGER)), 0) AS prompt_tokens,
+          COALESCE(SUM(CAST(json_extract(metadata_json, '$.completion_tokens') AS INTEGER)), 0) AS completion_tokens,
+          COALESCE(SUM(CASE WHEN CAST(json_extract(metadata_json, '$.citations') AS INTEGER) > 0 THEN 1 ELSE 0 END), 0) AS cited
+          FROM audit_logs WHERE org_id = ? AND action = 'knowledge.query' AND json_extract(metadata_json, '$.knowledge_base_id') = ?""", (user.org_id, knowledge_base_id)).fetchone()
+    questions = int(usage["questions"] or 0)
+    cited = int(usage["cited"] or 0)
+    return KnowledgeBaseStatsResponse(knowledge_base_id=knowledge_base_id, document_count=int(docs), chunk_count=int(chunks), question_count=questions, prompt_tokens=int(usage["prompt_tokens"] or 0), completion_tokens=int(usage["completion_tokens"] or 0), cited_question_count=cited, answer_success_rate=round(cited / questions, 4) if questions else 0.0)
 
 
 @router.put("/{knowledge_base_id}/access", status_code=204, response_class=Response)

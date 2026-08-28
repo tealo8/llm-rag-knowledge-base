@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, ArchiveRestore, Database, LoaderCircle, Plus, Save, Search, Trash2, Users, X } from "lucide-react";
+import { Archive, ArchiveRestore, Database, LoaderCircle, Plus, Save, Search, Settings2, Trash2, Users, X } from "lucide-react";
 import { api } from "../api";
 import type { KnowledgeBase, KnowledgeBaseMember, KnowledgeBasePermission, User } from "../types";
 import { Pagination } from "./Pagination";
@@ -25,6 +25,7 @@ export function KnowledgeBasesView({ token, user, selectedId, onSelect, onChange
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [accessTarget, setAccessTarget] = useState<KnowledgeBase | null>(null);
+  const [configTarget, setConfigTarget] = useState<KnowledgeBase | null>(null);
 
   async function load(requestedPage = page) {
     setLoading(true);
@@ -76,6 +77,7 @@ export function KnowledgeBasesView({ token, user, selectedId, onSelect, onChange
             <td>{item.document_count}</td>
             <td><div className="row-actions">
               {item.permission === "admin" && <button className="button compact secondary" onClick={() => setAccessTarget(item)}><Users size={15} />成员权限</button>}
+              {item.permission === "admin" && <button className="icon-button" title="知识库配置" onClick={() => setConfigTarget(item)}><Settings2 size={16} /></button>}
               {item.permission === "admin" && <button className="icon-button" title={item.status === "active" ? "归档" : "恢复"} onClick={() => toggleArchive(item)}>{item.status === "active" ? <Archive size={16} /> : <ArchiveRestore size={16} />}</button>}
               {item.permission === "admin" && item.document_count === 0 && <button className="icon-button danger" title="删除空知识库" onClick={() => remove(item)}><Trash2 size={16} /></button>}
             </div></td>
@@ -85,7 +87,23 @@ export function KnowledgeBasesView({ token, user, selectedId, onSelect, onChange
     </div>
     {createOpen && <CreateKnowledgeBaseDialog token={token} onClose={() => setCreateOpen(false)} onCreated={async (item) => { setCreateOpen(false); onSelect(item.id); setPage(1); await Promise.all([load(1), onChanged()]); notify("知识库已创建", "success"); }} notify={notify} />}
     {accessTarget && <KnowledgeBaseAccessDialog token={token} knowledgeBase={accessTarget} onClose={() => setAccessTarget(null)} notify={notify} />}
+    {configTarget && <KnowledgeBaseConfigDialog token={token} knowledgeBase={configTarget} onClose={() => setConfigTarget(null)} onSaved={async (updated) => { setItems((current) => current.map((item) => item.id === updated.id ? updated : item)); setConfigTarget(null); await onChanged(); notify("知识库配置已保存", "success"); }} notify={notify} />}
   </section>;
+}
+
+function KnowledgeBaseConfigDialog({ token, knowledgeBase, onClose, onSaved, notify }: { token: string; knowledgeBase: KnowledgeBase; onClose: () => void; onSaved: (item: KnowledgeBase) => Promise<void>; notify: Props["notify"] }) {
+  const defaults = knowledgeBase.rag_settings || {};
+  const [description, setDescription] = useState(knowledgeBase.description);
+  const [tags, setTags] = useState(knowledgeBase.tags.join(", "));
+  const [allowQa, setAllowQa] = useState(knowledgeBase.allow_qa);
+  const [allowUpload, setAllowUpload] = useState(knowledgeBase.allow_upload);
+  const [topK, setTopK] = useState(Number(defaults.top_k ?? 6));
+  const [threshold, setThreshold] = useState(Number(defaults.similarity_threshold ?? 0.4));
+  const [rerank, setRerank] = useState(Boolean(defaults.reranker_enabled));
+  const [prompt, setPrompt] = useState(String(defaults.system_prompt ?? ""));
+  const [saving, setSaving] = useState(false);
+  async function submit(event: React.FormEvent) { event.preventDefault(); setSaving(true); try { const updated = await api.updateKnowledgeBase(token, knowledgeBase.id, { description: description.trim(), tags: tags.split(/[,，]/).map((item) => item.trim()).filter(Boolean), allow_qa: allowQa, allow_upload: allowUpload, rag_settings: { ...defaults, top_k: topK, similarity_threshold: threshold, reranker_enabled: rerank, system_prompt: prompt } }); await onSaved(updated); } catch (error) { notify(error instanceof Error ? error.message : "配置保存失败", "error"); } finally { setSaving(false); } }
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form className="modal" onSubmit={submit}><div className="modal-header"><div><p className="eyebrow">Knowledge base settings</p><h2>{knowledgeBase.name} · 配置</h2></div><button type="button" className="icon-button" title="关闭" onClick={onClose}><X size={19} /></button></div><div className="modal-body"><label className="field"><span>知识库说明</span><textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label><label className="field"><span>标签</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="研发, 制度" /></label><div className="settings-grid"><label className="field"><span>检索片段数 Top-K</span><input type="number" min={2} max={20} value={topK} onChange={(event) => setTopK(Number(event.target.value))} /></label><label className="field"><span>相似度阈值</span><input type="number" min={0} max={1} step={0.01} value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} /></label></div><label className="toggle-row"><input type="checkbox" checked={rerank} onChange={(event) => setRerank(event.target.checked)} /><span><strong>启用 Rerank 重排序</strong><small>融合后按问题词覆盖度做二次排序</small></span></label><label className="toggle-row"><input type="checkbox" checked={allowQa} onChange={(event) => setAllowQa(event.target.checked)} /><span><strong>允许问答</strong><small>关闭后所有成员只能浏览和管理文档</small></span></label><label className="toggle-row"><input type="checkbox" checked={allowUpload} onChange={(event) => setAllowUpload(event.target.checked)} /><span><strong>允许普通成员上传</strong><small>关闭后仅管理员可通过后台导入</small></span></label><label className="field"><span>知识库专属 Prompt（可选）</span><textarea rows={5} maxLength={4000} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：回答采用法务审查清单格式，并先列出风险等级。" /></label></div><div className="modal-footer"><button type="button" className="button secondary" onClick={onClose}>取消</button><button className="button primary" disabled={saving}>{saving ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />}保存配置</button></div></form></div>;
 }
 
 function CreateKnowledgeBaseDialog({ token, onClose, onCreated, notify }: { token: string; onClose: () => void; onCreated: (item: KnowledgeBase) => Promise<void>; notify: Props["notify"] }) {

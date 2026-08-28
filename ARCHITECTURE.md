@@ -6,6 +6,8 @@
 
 ## 整体请求流程
 
+会话管理作为问答链路的持久化旁路，保存标题、收藏状态、父会话分支和反馈原因。分享只保存随机 token 的 SHA-256 摘要，带有效期和可选访问密码；公开读取接口仅返回创建者已经生成的会话内容，不提供知识库检索能力。
+
 ```mermaid
 flowchart LR
     B[浏览器 UI\nReact + TypeScript] -->|HTTPS + JWT| A[FastAPI API]
@@ -114,4 +116,3 @@ stateDiagram-v2
 ## 可观测与恢复
 
 `/metrics` 暴露 HTTP、模型和检索请求计数及耗时。SQLite/文件备份使用 `scripts/backup.py`，恢复使用 `scripts/restore.py`。PGVector 部署还必须配套 `pg_dump`、对象存储备份、Redis 任务记录备份和恢复演练。
-

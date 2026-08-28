@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import get_settings
@@ -56,6 +56,13 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     created_by TEXT REFERENCES users(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    avatar_url TEXT,
+    allow_qa INTEGER NOT NULL DEFAULT 1,
+    allow_upload INTEGER NOT NULL DEFAULT 1,
+    quota_documents INTEGER,
+    quota_bytes INTEGER,
     UNIQUE (org_id, slug),
     UNIQUE (org_id, name)
 );
@@ -138,6 +145,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     resource_id TEXT,
     query TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}',
+    ip_address TEXT,
+    result TEXT NOT NULL DEFAULT 'success',
     created_at TEXT NOT NULL
 );
 
@@ -156,6 +165,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     title TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+    ,favorite INTEGER NOT NULL DEFAULT 0
+    ,parent_id TEXT REFERENCES conversations(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS conversation_messages (
@@ -173,8 +184,21 @@ CREATE TABLE IF NOT EXISTS message_feedback (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
     comment TEXT NOT NULL DEFAULT '',
+    reason TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (message_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS conversation_shares (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    mode TEXT NOT NULL CHECK (mode IN ('readonly', 'continue')),
+    token_hash TEXT NOT NULL UNIQUE,
+    password_hash TEXT,
+    expires_at TEXT,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
@@ -220,7 +244,7 @@ CREATE INDEX IF NOT EXISTS idx_dead_letters_created ON task_dead_letters(created
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -259,6 +283,34 @@ def init_db(path: Path | None = None) -> None:
                 "processing_stage": "TEXT NOT NULL DEFAULT 'queued'",
                 "task_id": "TEXT",
             },
+        )
+        _ensure_columns(
+            connection,
+            "knowledge_bases",
+            {
+                "settings_json": "TEXT NOT NULL DEFAULT '{}'",
+                "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+                "avatar_url": "TEXT",
+                "allow_qa": "INTEGER NOT NULL DEFAULT 1",
+                "allow_upload": "INTEGER NOT NULL DEFAULT 1",
+                "quota_documents": "INTEGER",
+                "quota_bytes": "INTEGER",
+            },
+        )
+        _ensure_columns(
+            connection,
+            "conversations",
+            {"favorite": "INTEGER NOT NULL DEFAULT 0", "parent_id": "TEXT"},
+        )
+        _ensure_columns(
+            connection,
+            "message_feedback",
+            {"reason": "TEXT"},
+        )
+        _ensure_columns(
+            connection,
+            "audit_logs",
+            {"ip_address": "TEXT", "result": "TEXT NOT NULL DEFAULT 'success'"},
         )
         # Backfill stage values for databases created before asynchronous ingestion.
         connection.execute(

@@ -3,6 +3,7 @@ import {
   Building2,
   Check,
   Download,
+  Eye,
   File,
   FilePlus2,
   FileText,
@@ -57,6 +58,9 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [visibility, setVisibility] = useState<Visibility | "all">("all");
+  const [tag, setTag] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [preview, setPreview] = useState<{ title: string; filename: string; text: string } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [permissionDocument, setPermissionDocument] = useState<DocumentItem | null>(null);
   const [versionTarget, setVersionTarget] = useState<DocumentItem | null>(null);
@@ -71,6 +75,7 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
         pageSize: DOCUMENT_PAGE_SIZE,
         q: search,
         visibility,
+        tag,
       });
       if (requestedPage > Math.max(result.totalPages, 1)) {
         setPage(Math.max(result.totalPages, 1));
@@ -99,7 +104,7 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadDocuments(page); }, 250);
     return () => window.clearTimeout(timer);
-  }, [token, knowledgeBase?.id, page, search, visibility]);
+  }, [token, knowledgeBase?.id, page, search, visibility, tag]);
 
   useEffect(() => {
     if (!documents.some((item) => item.status === "processing")) return;
@@ -126,7 +131,18 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
     } catch (error) { notify(error instanceof Error ? error.message : "重新解析失败", "error"); }
   }
 
-  const canUpload = knowledgeBase && knowledgeBase.permission !== "view";
+  async function batch(action: "delete" | "reparse") {
+    if (!selectedIds.length) return notify("请先选择文档", "error");
+    if (action === "delete" && !window.confirm(`确认批量删除 ${selectedIds.length} 个文档？`)) return;
+    try { const result = await api.batchDocuments(token, selectedIds, action); const failed = result.results.filter((item) => item.status === "failed"); setSelectedIds([]); await loadDocuments(); notify(failed.length ? `${failed.length} 个文档处理失败` : "批量操作已完成", failed.length ? "error" : "success"); }
+    catch (error) { notify(error instanceof Error ? error.message : "批量操作失败", "error"); }
+  }
+
+  async function openPreview(document: DocumentItem) {
+    try { setPreview(await api.documentPreview(token, document.id)); } catch (error) { notify(error instanceof Error ? error.message : "预览失败", "error"); }
+  }
+
+  const canUpload = knowledgeBase && knowledgeBase.permission !== "view" && (knowledgeBase.allow_upload || knowledgeBase.permission === "admin");
   const canEdit = knowledgeBase && ["edit", "admin"].includes(knowledgeBase.permission);
 
   if (!knowledgeBase) return <div className="empty-workspace"><FileText size={30} /><h2>没有可访问的知识库</h2><p>请让管理员授予知识库权限。</p></div>;
@@ -150,7 +166,8 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
         <label className="search-field"><Search size={17} /><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索标题、文件或所有者" /></label>
         <label className="filter-select"><Filter size={16} /><select value={visibility} onChange={(event) => { setVisibility(event.target.value as Visibility | "all"); setPage(1); }}>
           <option value="all">全部范围</option><option value="organization">全组织</option><option value="restricted">指定用户组</option><option value="private">仅自己</option>
-        </select></label>
+        </select></label><label className="search-field tag-filter"><span>#</span><input value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }} placeholder="按标签筛选" /></label>
+        {canEdit && selectedIds.length > 0 && <div className="batch-actions"><span>已选 {selectedIds.length}</span><button className="button compact secondary" onClick={() => void batch("reparse")}><RefreshCw size={14} />批量重索引</button><button className="button compact danger" onClick={() => void batch("delete")}><Trash2 size={14} />批量删除</button></div>}
       </div>
 
       <div className="data-table-wrap">
@@ -160,20 +177,20 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
           <div className="table-state"><FileText size={28} /><span>没有匹配的文档</span></div>
         ) : (
           <table className="data-table document-table">
-            <thead><tr><th>文档</th><th>可见范围</th><th>所有者</th><th>索引</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead>
+            <thead><tr><th>{canEdit && <input type="checkbox" checked={documents.length > 0 && documents.every((item) => selectedIds.includes(item.id))} onChange={(event) => setSelectedIds(event.target.checked ? documents.map((item) => item.id) : [])} />}</th><th>文档</th><th>可见范围</th><th>所有者</th><th>索引</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead>
             <tbody>
               {documents.map((document) => {
                 const config = visibilityConfig[document.visibility];
                 const VisibilityIcon = config.icon;
                 return (
                   <tr key={document.id}>
-                    <td><div className="document-name"><span className="file-badge"><File size={19} /></span><span><strong>{document.title}</strong><small>{document.filename} · {formatBytes(document.size_bytes)}</small></span></div></td>
+                    <td>{canEdit && <input type="checkbox" checked={selectedIds.includes(document.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, document.id] : current.filter((id) => id !== document.id))} />}</td><td><div className="document-name"><span className="file-badge"><File size={19} /></span><span><strong>{document.title}</strong><small>{document.filename} · {formatBytes(document.size_bytes)}{document.tags.length ? ` · #${document.tags.join(" #")}` : ""}</small></span></div></td>
                     <td><span className={`visibility-badge ${document.visibility}`}><VisibilityIcon size={14} />{config.label}</span>{document.groups.length > 0 && <small className="cell-subtext">{document.groups.map((group) => group.name).join("、")}</small>}</td>
                     <td>{document.owner_name}</td>
                     <td><DocumentStatus document={document} /></td>
                     <td>{formatDate(document.created_at)}</td>
                     <td><div className="row-actions">
-                      {canEdit && <button className="icon-button" title="设置文档权限" onClick={() => setPermissionDocument(document)}><Settings2 size={17} /></button>}
+                      <button className="icon-button" title="在线预览" onClick={() => void openPreview(document)}><Eye size={17} /></button>{canEdit && <button className="icon-button" title="设置文档权限" onClick={() => setPermissionDocument(document)}><Settings2 size={17} /></button>}
                       {canEdit && <button className="icon-button" title="文档版本" onClick={() => setVersionTarget(document)}><History size={17} /></button>}
                       {canEdit && <button className="icon-button" title="上传新版本" onClick={() => { setNewVersionOf(document); setUploadOpen(true); }}><UploadCloud size={17} /></button>}
                       {canEdit && document.status === "failed" && <button className="icon-button" title="重新解析" onClick={() => reparse(document)}><RefreshCw size={17} /></button>}
@@ -223,6 +240,7 @@ export function DocumentsView({ token, user, knowledgeBase, notify }: DocumentsV
         />
       )}
       {versionTarget && <VersionsDialog token={token} document={versionTarget} canEdit={Boolean(canEdit)} onClose={() => setVersionTarget(null)} onChanged={loadDocuments} notify={notify} />}
+      {preview && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setPreview(null)}><div className="modal preview-dialog"><div className="modal-header"><div><p className="eyebrow">Document preview</p><h2>{preview.title}</h2><small>{preview.filename}</small></div><button className="icon-button" title="关闭" onClick={() => setPreview(null)}><X size={19} /></button></div><div className="modal-body"><pre className="document-preview">{preview.text}</pre></div><div className="modal-footer"><button className="button primary" onClick={() => setPreview(null)}>完成</button></div></div></div>}
     </section>
   );
 }
@@ -367,8 +385,8 @@ function UploadDialog({ token, knowledgeBase, groups, members, versionOf, onClos
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => { event.preventDefault(); selectFile(event.dataTransfer.files[0]); }}
           >
-            <input ref={inputRef} type="file" hidden accept=".pdf,.docx,.md,.txt,.xlsx" onChange={(event) => selectFile(event.target.files?.[0])} />
-            {file ? <><FileText size={27} /><strong>{file.name}</strong><span>{formatBytes(file.size)}{submitting ? ` · ${progress}%` : ""}</span></> : <><UploadCloud size={30} /><strong>选择或拖入文档</strong><span>PDF、DOCX、XLSX、Markdown、TXT · 大文件自动分片</span></>}
+            <input ref={inputRef} type="file" hidden accept=".pdf,.docx,.md,.txt,.xlsx,.csv" onChange={(event) => selectFile(event.target.files?.[0])} />
+            {file ? <><FileText size={27} /><strong>{file.name}</strong><span>{formatBytes(file.size)}{submitting ? ` · ${progress}%` : ""}</span></> : <><UploadCloud size={30} /><strong>选择或拖入文档</strong><span>PDF、DOCX、XLSX、CSV、Markdown、TXT · 大文件自动分片</span></>}
           </button>
           {inlineError && <div className="inline-error" role="alert"><ShieldCheck size={16} />{inlineError}</div>}
           <label className="field"><span>文档标题</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="输入易于检索的标题" /></label>

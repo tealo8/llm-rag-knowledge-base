@@ -449,6 +449,8 @@ def update_user_access(
 def audit_logs(
     response: Response,
     q: str = Query("", max_length=200),
+    action: str | None = Query(None, max_length=120),
+    result: str | None = Query(None, pattern="^(success|failure)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     user: CurrentUser = Depends(require_roles("admin")),
@@ -465,6 +467,12 @@ def audit_logs(
             )
             search_value = f"%{escape_like(cleaned_query)}%"
             params.extend([search_value, search_value, search_value, search_value])
+        if action:
+            filters.append("a.action = ?")
+            params.append(action)
+        if result:
+            filters.append("a.result = ?")
+            params.append(result)
         where_clause = " AND ".join(filters)
         total = connection.execute(
             f"SELECT COUNT(*) AS count FROM audit_logs a JOIN users u ON u.id = a.user_id "
@@ -475,7 +483,7 @@ def audit_logs(
         rows = connection.execute(
             f"""
             SELECT a.id, u.display_name AS user_name, a.action, a.resource_type,
-                   a.resource_id, a.query, a.metadata_json, a.created_at
+                   a.resource_id, a.query, a.metadata_json, a.ip_address, a.result, a.created_at
             FROM audit_logs a JOIN users u ON u.id = a.user_id
             WHERE {where_clause}
             ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?
@@ -495,6 +503,8 @@ def audit_logs(
             query=row["query"] if get_settings().audit_log_queries else None,
             metadata=json.loads(row["metadata_json"]),
             created_at=row["created_at"],
+            ip_address=row["ip_address"],
+            result=row["result"] or "success",
         )
         for row in rows
     ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from typing import Any
 from time import perf_counter
 from dataclasses import dataclass
 
@@ -39,13 +40,14 @@ def _row_to_chunk(row) -> RetrievedChunk:
 
 
 async def hybrid_search(
-    query: str, user: CurrentUser, top_k: int, knowledge_base_id: str
+    query: str, user: CurrentUser, top_k: int, knowledge_base_id: str,
+    rag_settings: dict[str, Any] | None = None,
 ) -> tuple[list[RetrievedChunk], dict[str, int | float | str]]:
     started = perf_counter()
     acl_clause, acl_params = document_acl_sql(user)
     embedding_service = EmbeddingService()
     vector_store = get_vector_store()
-    rag_settings = get_org_settings(user.org_id)
+    rag_settings = rag_settings or get_org_settings(user.org_id)
     query_embedding: list[float] | None = None
     vector_error: str | None = None
     try:

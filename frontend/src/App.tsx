@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
-import { api } from "./api";
+import { CheckCircle2, LoaderCircle, XCircle, Lock, FileText } from "lucide-react";
+import { api, ApiError } from "./api";
 import { AppShell, type View } from "./components/AppShell";
 import { ChatView } from "./components/ChatView";
 import { DocumentsView } from "./components/DocumentsView";
@@ -21,6 +21,9 @@ export default function App() {
   const [checking, setChecking] = useState(Boolean(token));
   const [loginError, setLoginError] = useState("");
   const [toast, setToast] = useState<{ message: string; tone: "error" | "success" } | null>(null);
+
+  const sharedMatch = window.location.pathname.match(/^\/shared\/conversations\/([^/]+)/);
+  if (sharedMatch) return <SharedConversationView token={decodeURIComponent(sharedMatch[1])} />;
 
   useEffect(() => {
     if (!token) { setChecking(false); return; }
@@ -94,4 +97,16 @@ export default function App() {
       {toast && <div className={`toast ${toast.tone}`} role="status">{toast.tone === "success" ? <CheckCircle2 size={18} /> : <XCircle size={18} />}{toast.message}</div>}
     </AppShell>
   );
+}
+
+function SharedConversationView({ token }: { token: string }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.sharedConversation>> | null>(null);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  async function load(value?: string) { setLoading(true); setError(""); try { setData(await api.sharedConversation(token, value)); } catch (err) { if (err instanceof ApiError && err.status === 401 && !value) setError("此分享链接需要密码"); else setError(err instanceof Error ? err.message : "分享链接读取失败"); } finally { setLoading(false); } }
+  useEffect(() => { void load(); }, [token]);
+  if (loading) return <div className="app-loading"><LoaderCircle className="spin" size={26} /><span>正在读取分享会话</span></div>;
+  if (!data) return <div className="shared-page"><div className="shared-card"><Lock size={26} /><h1>受保护的会话</h1><p>{error || "链接无效或已过期"}</p>{error.includes("密码") && <form onSubmit={(event) => { event.preventDefault(); void load(password); }}><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入访问密码" minLength={6} /><button className="button primary">查看会话</button></form>}</div></div>;
+  return <div className="shared-page"><main className="shared-card conversation-shared"><div className="shared-heading"><div><p className="eyebrow">Shared conversation</p><h1>{data.title}</h1><p>{data.knowledge_base_name} · {data.mode === "readonly" ? "只读分享" : "继续模式预留（当前只读）"}</p></div><FileText size={24} /></div><div className="shared-messages">{data.messages.map((message) => <article key={message.id} className={`shared-message ${message.role}`}><span>{message.role === "user" ? "提问" : "知域助手"}</span><div>{message.content}</div>{message.citations.length > 0 && <small>引用：{message.citations.map((citation) => `${citation.title}${citation.page_number ? ` · 第${citation.page_number}页` : ""}`).join("；")}</small>}</article>)}</div></main></div>;
 }

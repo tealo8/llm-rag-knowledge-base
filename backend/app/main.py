@@ -8,7 +8,7 @@ from time import monotonic
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from .api import admin, auth, chat, conversations, documents, knowledge_bases, uploads
 from .config import PROJECT_ROOT, get_settings
@@ -110,4 +110,12 @@ def metrics() -> PlainTextResponse:
 
 frontend_dist = PROJECT_ROOT / "frontend" / "dist"
 if frontend_dist.exists():
+    @app.get("/shared/conversations/{share_token}", include_in_schema=False)
+    def shared_conversation_page(share_token: str) -> FileResponse:
+        # The SPA validates the token through the public read-only API.
+        return FileResponse(
+            frontend_dist / "index.html",
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        )
+
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

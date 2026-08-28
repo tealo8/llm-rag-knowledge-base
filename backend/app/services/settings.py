@@ -55,3 +55,20 @@ def save_org_settings(org_id: str, user_id: str, values: dict[str, Any]) -> dict
             (org_id, json.dumps(merged, ensure_ascii=False), user_id, utc_now()),
         )
     return merged
+
+
+def get_knowledge_base_settings(org_id: str, knowledge_base_id: str) -> dict[str, Any]:
+    """Merge organization defaults with per-knowledge-base overrides."""
+    base = get_org_settings(org_id)
+    with db_session() as connection:
+        row = connection.execute(
+            "SELECT settings_json FROM knowledge_bases WHERE id = ? AND org_id = ?",
+            (knowledge_base_id, org_id),
+        ).fetchone()
+    if not row:
+        return base
+    try:
+        overrides = json.loads(row["settings_json"] or "{}")
+    except json.JSONDecodeError:
+        overrides = {}
+    return {**base, **overrides}

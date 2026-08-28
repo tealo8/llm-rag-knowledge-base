@@ -166,13 +166,14 @@ async def generate_answer(
     )
     try:
         if settings.llm_provider == "ollama":
+            model_name = str(controls.get("model") or settings.llm_model)
             response = await post_json(
                 f"{settings.ollama_base_url}/api/chat",
                 {
-                    "model": settings.llm_model,
+                    "model": model_name,
                     "stream": False,
                     "messages": messages,
-                    "options": {"temperature": float(controls.get("temperature", 0.1))},
+                    "options": {"temperature": float(controls.get("temperature", 0.1)), "top_p": float(controls.get("top_p", 0.9))},
                 },
             )
             answer = str(response.data["message"]["content"]).strip()
@@ -180,8 +181,9 @@ async def generate_answer(
             response = await post_json(
                 f"{settings.llm_base_url}/chat/completions",
                 {
-                    "model": settings.llm_model,
+                    "model": str(controls.get("model") or settings.llm_model),
                     "temperature": float(controls.get("temperature", 0.1)),
+                    "top_p": float(controls.get("top_p", 0.9)),
                     "messages": messages,
                 },
                 headers={"Authorization": f"Bearer {settings.llm_api_key}"},
@@ -194,14 +196,14 @@ async def generate_answer(
             _fallback_answer(query, chunks),
             {
                 "generation_mode": "extractive_degraded",
-                "generation_model": f"{settings.llm_provider}:{settings.llm_model}",
+                "generation_model": f"{settings.llm_provider}:{str(controls.get('model') or settings.llm_model)}",
                 "generation_degraded_reason": f"llm_unavailable: {str(exc)[:200]}",
             },
         )
 
     metrics: dict[str, int | float | str] = {
         "generation_mode": "model" if chunks else "model_general",
-        "generation_model": f"{settings.llm_provider}:{settings.llm_model}",
+        "generation_model": f"{settings.llm_provider}:{str(controls.get('model') or settings.llm_model)}",
         "generation_latency_ms": response.latency_ms,
         "generation_attempts": response.attempts,
         **_usage_metrics(response.data),

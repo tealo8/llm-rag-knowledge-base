@@ -16,12 +16,14 @@ def write_audit(
     resource_id: str | None = None,
     query: str | None = None,
     metadata: dict | None = None,
+    ip_address: str | None = None,
+    result: str = "success",
 ) -> None:
     connection.execute(
         """
         INSERT INTO audit_logs
-            (id, org_id, user_id, action, resource_type, resource_id, query, metadata_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, org_id, user_id, action, resource_type, resource_id, query, metadata_json, ip_address, result, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             str(uuid.uuid4()),
@@ -32,7 +34,8 @@ def write_audit(
             resource_id,
             query,
             json.dumps(metadata or {}, ensure_ascii=False),
+            ip_address,
+            result,
             utc_now(),
         ),
     )
-

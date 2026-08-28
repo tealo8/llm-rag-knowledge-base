@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import db_session
 from ..schemas import LoginRequest, LoginResponse, UserResponse
 from ..security import CurrentUser, create_access_token, get_current_user, verify_password
+from ..services.audit import write_audit
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -35,7 +36,7 @@ def serialize_user(user_id: str) -> UserResponse:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest) -> LoginResponse:
+def login(payload: LoginRequest, request: Request) -> LoginResponse:
     with db_session() as connection:
         row = connection.execute(
             "SELECT id, password_hash FROM users WHERE username = ? AND active = 1",
@@ -43,6 +44,10 @@ def login(payload: LoginRequest) -> LoginResponse:
         ).fetchone()
     if row is None or not verify_password(payload.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+    with db_session() as connection:
+        user = connection.execute("SELECT id, org_id, username, display_name, email, role FROM users WHERE id = ?", (row["id"],)).fetchone()
+        if user:
+            write_audit(connection, CurrentUser(**dict(user)), "user.login", "user", row["id"], ip_address=request.client.host if request.client else None)
     return LoginResponse(
         access_token=create_access_token(row["id"]),
         user=serialize_user(row["id"]),
@@ -52,4 +57,3 @@ def login(payload: LoginRequest) -> LoginResponse:
 @router.get("/me", response_model=UserResponse)
 def me(user: CurrentUser = Depends(get_current_user)) -> UserResponse:
     return serialize_user(user.id)
-

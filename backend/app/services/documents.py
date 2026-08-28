@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import csv
 import re
 import sqlite3
 import unicodedata
@@ -24,7 +25,7 @@ from .settings import get_org_settings
 from .vector_store import VectorRecord, get_vector_store
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".xlsx"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".xlsx", ".csv"}
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ def safe_filename(filename: str) -> str:
         raise HTTPException(status_code=400, detail="文件名无效")
     suffix = Path(cleaned).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=415, detail="仅支持 PDF、DOCX、XLSX、Markdown 和 TXT")
+        raise HTTPException(status_code=415, detail="仅支持 PDF、DOCX、XLSX、CSV、Markdown 和 TXT")
     return cleaned
 
 
@@ -130,6 +131,21 @@ def parse_document(filename: str, content: bytes) -> list[ParsedPage]:
             workbook.close()
         except Exception as exc:
             raise HTTPException(status_code=422, detail="XLSX 解析失败") from exc
+    elif suffix == ".csv":
+        try:
+            decoded = None
+            for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+                try:
+                    decoded = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if decoded is None:
+                raise ValueError("encoding")
+            rows = [" | ".join(row) for row in csv.reader(io.StringIO(decoded)) if any(cell.strip() for cell in row)]
+            pages = [ParsedPage(1, clean_text("\n".join(rows)))]
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="CSV 解析失败") from exc
     else:
         decoded = None
         for encoding in ("utf-8-sig", "utf-8", "gb18030"):
@@ -430,6 +446,9 @@ async def ingest_document(
         kb_id = resolve_knowledge_base(
             connection, user, knowledge_base_id, "view" if is_seed else "upload"
         )
+        kb_state = connection.execute("SELECT allow_upload FROM knowledge_bases WHERE id = ?", (kb_id,)).fetchone()
+        if kb_state is not None and not bool(kb_state["allow_upload"]) and not is_seed:
+            raise HTTPException(status_code=403, detail="当前知识库暂未开放文档上传")
         groups, allowed_users = validate_document_acl(
             connection, user.org_id, visibility, group_ids, user_ids or []
         )

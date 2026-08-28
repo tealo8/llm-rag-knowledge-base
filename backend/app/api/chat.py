@@ -20,7 +20,7 @@ from ..services.audit import write_audit
 from ..services.documents import resolve_knowledge_base
 from ..services.governance import validate_user_query
 from ..services.retrieval import hybrid_search
-from ..services.settings import get_org_settings
+from ..services.settings import get_knowledge_base_settings
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -45,11 +45,17 @@ def _conversation_context(
             if payload.knowledge_base_id and payload.knowledge_base_id != kb_id:
                 raise HTTPException(status_code=409, detail="会话不能切换到其他知识库")
             require_knowledge_base_permission(connection, user, kb_id, "view")
+            kb_state = connection.execute("SELECT allow_qa FROM knowledge_bases WHERE id = ?", (kb_id,)).fetchone()
+            if kb_state is not None and not bool(kb_state["allow_qa"]):
+                raise HTTPException(status_code=403, detail="当前知识库暂未开放问答")
             conversation_id = str(conversation["id"])
         else:
             kb_id = resolve_knowledge_base(
                 connection, user, payload.knowledge_base_id, "view"
             )
+            kb_state = connection.execute("SELECT allow_qa FROM knowledge_bases WHERE id = ?", (kb_id,)).fetchone()
+            if kb_state is not None and not bool(kb_state["allow_qa"]):
+                raise HTTPException(status_code=403, detail="当前知识库暂未开放问答")
             conversation_id = str(uuid.uuid4())
             now = utc_now()
             connection.execute(
@@ -89,16 +95,20 @@ async def chat(
 ) -> ChatResponse:
     started = perf_counter()
     query_text = payload.query.strip()
-    rag_settings = get_org_settings(user.org_id)
-    validate_user_query(query_text, rag_settings)
     conversation_id, kb_id, history, previous_query = _conversation_context(payload, user)
+    rag_settings = get_knowledge_base_settings(user.org_id, kb_id)
+    if payload.rerank is not None:
+        rag_settings["reranker_enabled"] = payload.rerank
+    if payload.temperature is not None:
+        rag_settings["temperature"] = payload.temperature
+    validate_user_query(query_text, rag_settings)
     retrieval_query = (
         f"上一轮问题：{previous_query}\n当前追问：{query_text}"
         if previous_query
         else query_text
     )
     top_k = payload.top_k or int(rag_settings["top_k"])
-    chunks, metrics = await hybrid_search(retrieval_query, user, top_k, kb_id)
+    chunks, metrics = await hybrid_search(retrieval_query, user, top_k, kb_id, rag_settings)
     result = await generate_answer(
         query_text,
         chunks,

@@ -12,6 +12,7 @@ import {
   Power,
   RefreshCw,
   Save,
+  Search,
   Settings2,
   ShieldCheck,
   Trash2,
@@ -83,13 +84,15 @@ export function GovernanceView({ token, user, notify }: GovernanceViewProps) {
   const [settings, setSettings] = useState<RagSettings | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [createUserOpen, setCreateUserOpen] = useState(false);
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditAction, setAuditAction] = useState("");
 
   async function load() {
     setLoading(true);
     try {
       if (user.role === "admin") {
         const [groupData, groupOptionData, memberData, auditData, systemData, settingsData] = await Promise.all([
-          api.groupPage(token, { page: groupPage, pageSize: 10 }), api.groups(token), api.userPage(token, { page: memberPage, pageSize: 10 }), api.auditPage(token, { page: auditPage, pageSize: 10 }), api.systemStatus(token), api.settings(token),
+          api.groupPage(token, { page: groupPage, pageSize: 10 }), api.groups(token), api.userPage(token, { page: memberPage, pageSize: 10 }), api.auditPage(token, { page: auditPage, pageSize: 10, q: auditSearch, action: auditAction || undefined }), api.systemStatus(token), api.settings(token),
         ]);
         const validGroupPage = Math.max(groupData.totalPages, 1);
         const validMemberPage = Math.max(memberData.totalPages, 1);
@@ -122,7 +125,7 @@ export function GovernanceView({ token, user, notify }: GovernanceViewProps) {
     }
   }
 
-  useEffect(() => { load(); }, [token, user.role, groupPage, memberPage, auditPage]);
+  useEffect(() => { load(); }, [token, user.role, groupPage, memberPage, auditPage, auditSearch, auditAction]);
 
   async function removeGroup(group: Group) {
     if (!window.confirm(`确认删除用户组“${group.name}”？`)) return;
@@ -277,10 +280,11 @@ export function GovernanceView({ token, user, notify }: GovernanceViewProps) {
       {user.role === "admin" && (
         <section className="audit-section">
           <div className="section-heading"><div><h2>最近审计事件</h2><p>查询、上传、删除和权限变更均记录在当前租户内</p></div></div>
+          <div className="table-toolbar audit-toolbar"><label className="search-field"><Search size={16} /><input value={auditSearch} onChange={(event) => { setAuditSearch(event.target.value); setAuditPage(1); }} placeholder="搜索成员、动作或资源" /></label><select value={auditAction} onChange={(event) => { setAuditAction(event.target.value); setAuditPage(1); }}><option value="">全部动作</option><option value="knowledge.query">知识查询</option><option value="document.upload">上传文档</option><option value="answer.feedback">问答反馈</option><option value="user.login">成员登录</option></select></div>
           <div className="data-table-wrap">
             {loading ? <div className="table-state"><LoaderCircle className="spin" size={23} />正在读取审计日志</div> : (
-              <table className="data-table audit-table"><thead><tr><th>时间</th><th>成员</th><th>动作</th><th>查询 / 资源</th><th>结果</th></tr></thead><tbody>
-                {audit.map((item) => <tr key={item.id}><td>{time(item.created_at)}</td><td>{item.user_name}</td><td><span className="audit-action">{actionLabels[item.action] ?? item.action}</span></td><td className="audit-query">{item.query ?? item.resource_id ?? "-"}</td><td>{item.action === "knowledge.query" ? `${String(item.metadata.citations ?? 0)} 条引用` : "已完成"}</td></tr>)}
+              <table className="data-table audit-table"><thead><tr><th>时间</th><th>成员</th><th>动作</th><th>查询 / 资源</th><th>IP</th><th>结果</th></tr></thead><tbody>
+                {audit.map((item) => <tr key={item.id}><td>{time(item.created_at)}</td><td>{item.user_name}</td><td><span className="audit-action">{actionLabels[item.action] ?? item.action}</span></td><td className="audit-query">{item.query ?? item.resource_id ?? "-"}</td><td>{item.ip_address ?? "-"}</td><td>{item.result === "failure" ? "失败" : item.action === "knowledge.query" ? `${String(item.metadata.citations ?? 0)} 条引用` : "成功"}</td></tr>)}
               </tbody></table>
             )}
             <Pagination page={auditPage} pageSize={10} total={auditTotal} onPageChange={setAuditPage} />

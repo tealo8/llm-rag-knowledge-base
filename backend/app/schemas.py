@@ -48,6 +48,13 @@ class KnowledgeBaseResponse(BaseModel):
     permission: Literal["view", "upload", "edit", "admin"]
     document_count: int
     created_at: str
+    tags: list[str] = Field(default_factory=list)
+    avatar_url: str | None = None
+    allow_qa: bool = True
+    allow_upload: bool = True
+    quota_documents: int | None = None
+    quota_bytes: int | None = None
+    rag_settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class KnowledgeBaseCreateRequest(BaseModel):
@@ -60,6 +67,13 @@ class KnowledgeBaseUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     status: Literal["active", "archived"] | None = None
+    tags: list[str] | None = Field(default=None, max_length=30)
+    avatar_url: str | None = Field(default=None, max_length=500)
+    allow_qa: bool | None = None
+    allow_upload: bool | None = None
+    quota_documents: int | None = Field(default=None, ge=1)
+    quota_bytes: int | None = Field(default=None, ge=1)
+    rag_settings: dict[str, Any] | None = None
 
 
 class KnowledgeBaseAccessUpdate(BaseModel):
@@ -74,6 +88,17 @@ class KnowledgeBaseMemberAccess(BaseModel):
     email: str
     role: Literal["admin", "editor", "viewer"]
     permission: Literal["view", "upload", "edit", "admin"] | None
+
+
+class KnowledgeBaseStatsResponse(BaseModel):
+    knowledge_base_id: str
+    document_count: int
+    chunk_count: int
+    question_count: int
+    prompt_tokens: int
+    completion_tokens: int
+    cited_question_count: int
+    answer_success_rate: float
 
 
 class AdminUserResponse(BaseModel):
@@ -134,6 +159,19 @@ class DocumentPermissionUpdate(BaseModel):
     visibility: Literal["organization", "restricted", "private"]
     group_ids: list[str] = Field(default_factory=list, max_length=50)
     user_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class DocumentBatchRequest(BaseModel):
+    document_ids: list[str] = Field(min_length=1, max_length=100)
+    action: Literal["delete", "reparse"]
+
+
+class DocumentPreviewResponse(BaseModel):
+    id: str
+    title: str
+    filename: str
+    content_type: str
+    text: str
 
 
 class RagSettingsUpdate(BaseModel):
@@ -197,6 +235,12 @@ class ChatRequest(BaseModel):
     knowledge_base_id: str | None = None
     conversation_id: str | None = None
     top_k: int | None = Field(default=None, ge=2, le=20)
+    rerank: bool | None = None
+    mode: Literal["fast", "deep"] = "fast"
+    stream: bool = False
+    model: str | None = Field(default=None, max_length=120)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
 
 
 class ChatResponse(BaseModel):
@@ -225,6 +269,8 @@ class AuditResponse(BaseModel):
     query: str | None
     metadata: dict
     created_at: str
+    ip_address: str | None = None
+    result: Literal["success", "failure"] = "success"
 
 
 class ConversationSummary(BaseModel):
@@ -235,6 +281,8 @@ class ConversationSummary(BaseModel):
     message_count: int
     created_at: str
     updated_at: str
+    favorite: bool = False
+    parent_id: str | None = None
 
 
 class ConversationMessageResponse(BaseModel):
@@ -244,6 +292,7 @@ class ConversationMessageResponse(BaseModel):
     citations: list[CitationResponse]
     metrics: dict[str, Any]
     feedback: Literal["up", "down"] | None = None
+    feedback_reason: Literal["hallucination", "incorrect", "incomplete", "irrelevant"] | None = None
     created_at: str
 
 
@@ -254,3 +303,41 @@ class ConversationDetail(ConversationSummary):
 class FeedbackRequest(BaseModel):
     rating: Literal["up", "down"]
     comment: str = Field(default="", max_length=1000)
+    reason: Literal["hallucination", "incorrect", "incomplete", "irrelevant"] | None = None
+
+
+class ConversationUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    favorite: bool | None = None
+
+
+class ConversationBranchRequest(BaseModel):
+    message_id: str | None = None
+    title: str | None = Field(default=None, max_length=120)
+
+
+class ConversationShareRequest(BaseModel):
+    mode: Literal["readonly", "continue"] = "readonly"
+    expires_in_hours: int | None = Field(default=72, ge=1, le=720)
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+
+
+class ConversationShareResponse(BaseModel):
+    id: str
+    conversation_id: str
+    mode: Literal["readonly", "continue"]
+    token: str
+    expires_at: str | None
+    created_at: str
+
+
+class SharedConversationAccessRequest(BaseModel):
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+
+
+class SharedConversationResponse(BaseModel):
+    title: str
+    knowledge_base_name: str
+    mode: Literal["readonly", "continue"]
+    expires_at: str | None
+    messages: list[ConversationMessageResponse]
